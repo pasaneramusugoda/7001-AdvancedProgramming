@@ -15,6 +15,7 @@ import com.iwfc.model.user.User;
 import com.iwfc.pattern.creational.SessionBuilder;
 import com.iwfc.pattern.structural.IWFCSystemFacade;
 
+import java.io.InputStream;
 import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -38,8 +39,16 @@ public class ConsoleMenu {
     private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd");
 
     public ConsoleMenu(IWFCSystemFacade facade) {
+        this(facade, new Scanner(System.in));
+    }
+
+    public ConsoleMenu(IWFCSystemFacade facade, InputStream inputStream) {
+        this(facade, new Scanner(inputStream));
+    }
+
+    public ConsoleMenu(IWFCSystemFacade facade, Scanner scanner) {
         this.facade = facade;
-        this.scanner = new Scanner(System.in);
+        this.scanner = scanner;
     }
 
     private String readLine() {
