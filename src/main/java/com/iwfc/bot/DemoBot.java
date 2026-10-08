@@ -38,11 +38,17 @@ public class DemoBot {
     private final IWFCSystemFacade facade;
     private final int typingDelayMs;
     private final int stepDelayMs;
+    private final int readDelayMs;
 
     public DemoBot(IWFCSystemFacade facade, int typingDelayMs, int stepDelayMs) {
+        this(facade, typingDelayMs, stepDelayMs, 0);
+    }
+
+    public DemoBot(IWFCSystemFacade facade, int typingDelayMs, int stepDelayMs, int readDelayMs) {
         this.facade = facade;
         this.typingDelayMs = typingDelayMs;
         this.stepDelayMs = stepDelayMs;
+        this.readDelayMs = readDelayMs;
     }
 
     /**
@@ -279,10 +285,32 @@ public class DemoBot {
 
             @Override
             public int read() throws IOException {
-                while (byteIndex >= currentLineBytes.length) {
+                byte[] single = new byte[1];
+                int n = read(single, 0, 1);
+                return n == -1 ? -1 : (single[0] & 0xFF);
+            }
+
+            // Overriding the bulk read is essential: InputStreamReader's decoder calls this to fill
+            // an internal buffer of several KB in one shot. Without this override, the default
+            // InputStream.read(byte[], int, int) loops calling read() until that whole buffer is
+            // full, which pulls dozens of future steps' dynamic inputSupplier.apply(facade) lookups
+            // (e.g. "find TM-01's ticket ID") before ConsoleMenu has processed the steps that would
+            // have produced their expected state, silently acting on stale data. Returning only one
+            // line per call forces each step's input to be resolved lazily, exactly when ConsoleMenu
+            // actually requests it.
+            @Override
+            public int read(byte[] b, int off, int len) throws IOException {
+                if (len == 0) {
+                    return 0;
+                }
+                if (byteIndex >= currentLineBytes.length) {
                     if (stepQueue.isEmpty()) {
                         return -1; // EOF
                     }
+
+                    // Reading pause: the previous step's output is now on screen, so give the
+                    // viewer time to read it before the next banner and typing begin.
+                    pause(readDelayMs);
 
                     Step step = stepQueue.poll();
                     stepIndex++;
@@ -301,16 +329,14 @@ public class DemoBot {
                     byteIndex = 0;
 
                     // Pause slightly after supplying input so user can watch execution
-                    if (stepDelayMs > 0) {
-                        try {
-                            Thread.sleep(stepDelayMs);
-                        } catch (InterruptedException e) {
-                            Thread.currentThread().interrupt();
-                        }
-                    }
+                    pause(stepDelayMs);
                 }
 
-                return currentLineBytes[byteIndex++] & 0xFF;
+                int available = currentLineBytes.length - byteIndex;
+                int toCopy = Math.min(available, len);
+                System.arraycopy(currentLineBytes, byteIndex, b, off, toCopy);
+                byteIndex += toCopy;
+                return toCopy;
             }
         };
 
@@ -329,7 +355,7 @@ public class DemoBot {
         System.out.println(CYAN + "• Simulating Member, Instructor, and Administrator roles in real-time." + RESET);
         System.out.println(CYAN + "• Demonstrating Creational (Factory/Builder), Structural (Facade), and Behavioural (Observer/Strategy) patterns." + RESET);
         System.out.println(CYAN + "• Verifying Custom Exceptions: InvalidBookingException, UnauthorizedAccessException, DuplicateDataException." + RESET);
-        System.out.println(CYAN + "• Pace: " + (typingDelayMs > 0 ? "Realistic Interactive Simulation (~" + stepDelayMs + "ms)" : "High-Speed Execution") + RESET);
+        System.out.println(CYAN + "• Pace: " + (typingDelayMs > 0 ? "Realistic Interactive Simulation (typing " + typingDelayMs + "ms/char, step " + stepDelayMs + "ms, read " + readDelayMs + "ms)" : "High-Speed Execution") + RESET);
         System.out.println(BOLD_CYAN + "================================================================================" + RESET + "\n");
     }
 
@@ -339,6 +365,17 @@ public class DemoBot {
         System.out.printf("%s📂 Category : %s%s%s%n", BOLD_MAGENTA, BOLD, step.category, RESET);
         System.out.printf("%s📝 Purpose  : %s%s%n", CYAN, step.rationale, RESET);
         System.out.println(BOLD_BLUE + "--------------------------------------------------------------------------------" + RESET);
+    }
+
+    private static void pause(int ms) {
+        if (ms <= 0) {
+            return;
+        }
+        try {
+            Thread.sleep(ms);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     private void simulateTyping(String text) {
@@ -374,32 +411,57 @@ public class DemoBot {
 
     /**
      * Main entry point to launch the bot.
-     * Supports arguments:
+     * Pace presets:
      *   --fast   : Zero delay for high-speed automated testing
-     *   --normal : Default interactive pace (50ms typing, 250ms step pause)
-     *   --slow   : Presentation pace (100ms typing, 600ms step pause)
+     *   --normal : Default interactive pace (35ms typing, 200ms step pause)
+     *   --slow   : Presentation pace for video recording (120ms typing, 800ms step pause, 3s read pause)
+     * Individual overrides (milliseconds, applied after any preset):
+     *   --typing=N : delay per typed character
+     *   --step=N   : pause after typing, before the command runs
+     *   --read=N   : pause before each step so the previous output can be read
      */
     public static void main(String[] args) {
         int typingDelay = 35;
         int stepDelay = 200;
+        int readDelay = 0;
 
         for (String arg : args) {
             if ("--fast".equalsIgnoreCase(arg)) {
                 typingDelay = 0;
                 stepDelay = 0;
+                readDelay = 0;
             } else if ("--slow".equalsIgnoreCase(arg)) {
-                typingDelay = 80;
-                stepDelay = 500;
+                typingDelay = 120;
+                stepDelay = 800;
+                readDelay = 3000;
             } else if ("--normal".equalsIgnoreCase(arg)) {
                 typingDelay = 35;
                 stepDelay = 200;
+                readDelay = 0;
+            }
+        }
+        for (String arg : args) {
+            if (arg.startsWith("--typing=")) {
+                typingDelay = parseMs(arg);
+            } else if (arg.startsWith("--step=")) {
+                stepDelay = parseMs(arg);
+            } else if (arg.startsWith("--read=")) {
+                readDelay = parseMs(arg);
             }
         }
 
         IWFCSystemFacade facade = new IWFCSystemFacade();
         DataInitializer.initializeSeedData(facade);
 
-        DemoBot bot = new DemoBot(facade, typingDelay, stepDelay);
+        DemoBot bot = new DemoBot(facade, typingDelay, stepDelay, readDelay);
         bot.run();
+    }
+
+    private static int parseMs(String arg) {
+        try {
+            return Math.max(0, Integer.parseInt(arg.substring(arg.indexOf('=') + 1)));
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("Invalid delay in '" + arg + "': expected a number of milliseconds.");
+        }
     }
 }

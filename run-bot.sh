@@ -8,6 +8,7 @@
 #   ./run-bot.sh          (Default: realistic interactive simulation pace)
 #   ./run-bot.sh --fast   (High-speed instant verification)
 #   ./run-bot.sh --slow   (Presentation pace for video recording / viva walkthrough)
+#   ./run-bot.sh --slow --read=5000 --typing=150   (Override: read pause / per-char typing / --step=N)
 # ==============================================================================
 
 export JAVA_HOME=/Library/Java/JavaVirtualMachines/jdk-22.jdk/Contents/Home
